@@ -1,15 +1,14 @@
-﻿using Microsoft.HockeyApp.Internal;
+﻿using Microsoft.HockeyApp;
+using Microsoft.HockeyApp.Extensibility.Windows;
+using Microsoft.HockeyApp.Services;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Resources;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Threading;
-using Microsoft.HockeyApp.Extensibility;
-using Microsoft.HockeyApp.Services;
 
 namespace Microsoft.HockeyApp
 {
@@ -44,25 +43,34 @@ namespace Microsoft.HockeyApp
         /// <returns>HockeyClient configurable.</returns>
         public static IHockeyClientConfigurable Configure(this IHockeyClient @this, string identifier)
         {
-            if (@this.AsInternal().TestAndSetIsConfigured())
-            {
-                return @this as IHockeyClientConfigurable;
-            }
+            var applicationService = new ApplicationService();
+            var deviceService = new DeviceService();
+            var platformHelper = new HockeyPlatformHelperWPF(applicationService, deviceService);
 
-            @this.AsInternal().AppIdentifier = identifier;
-            @this.AsInternal().PlatformHelper = new HockeyPlatformHelperWPF();
+            var appId = Guid.Parse(identifier);
 
-            AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
-            Application.Current.DispatcherUnhandledException += Current_DispatcherUnhandledException;
+            @this.AsInternal().AppIdentifier = appId.ToString("N");
+            @this.AsInternal().PlatformHelper = platformHelper;
+
             ServiceLocator.AddService<IPlatformService>(new PlatformService());
-            TelemetryConfiguration.Active.InstrumentationKey = identifier;
-            
+            ServiceLocator.AddService<IApplicationService>(applicationService);
+            ServiceLocator.AddService<IDeviceService>(deviceService);
+            ServiceLocator.AddService<BaseStorageService>(new StorageService());
+            ServiceLocator.AddService<IUnhandledExceptionTelemetryModule>(new UnhandledExceptionTelemetryModule());
+
+            TelemetryConfiguration.Active.InstrumentationKey = appId.ToString("D");
+
+            WindowsAppInitializer
+                .InitializeAsync(appId.ToString("D"), TelemetryConfiguration.Active)
+                .ContinueWith(task => HockeyClient.Current.AsInternal().HandleInternalUnhandledException(task.Exception),
+                    TaskContinuationOptions.OnlyOnFaulted);
+
             return (IHockeyClientConfigurable)@this;
         }
 
-        private static Action<UnhandledExceptionEventArgs> customUnhandledExceptionAction;
-        private static Action<UnobservedTaskExceptionEventArgs> customUnobservedTaskExceptionAction;
-        private static Action<DispatcherUnhandledExceptionEventArgs> customDispatcherUnhandledExceptionAction;
+        internal static Action<UnhandledExceptionEventArgs> customUnhandledExceptionAction;
+        internal static Action<UnobservedTaskExceptionEventArgs> customUnobservedTaskExceptionAction;
+        internal static Action<DispatcherUnhandledExceptionEventArgs> customDispatcherUnhandledExceptionAction;
 
         /// <summary>
         /// Adds the handler for UnobservedTaskExceptions
@@ -224,7 +232,7 @@ namespace Microsoft.HockeyApp
         /// <returns>
         /// The Feedback-Thread or, if not found or delete, null.
         /// </returns>
-        public static async Task<IFeedbackThread> OpenFeedbackThreadAsync(this IHockeyClient @this,string feedbackToken)
+        public static async Task<IFeedbackThread> OpenFeedbackThreadAsync(this IHockeyClient @this, string feedbackToken)
         {
             return await @this.AsInternal().OpenFeedbackThreadAsync(feedbackToken);
         }
@@ -275,12 +283,14 @@ namespace Microsoft.HockeyApp
         /// </summary>
         public static string AppIdHash
         {
-            get {
+            get
+            {
                 if (_appIdHash == null)
                 {
                     _appIdHash = GetMD5Hash(HockeyClient.Current.AsInternal().AppIdentifier);
                 }
-                return _appIdHash; }
+                return _appIdHash;
+            }
         }
 
         internal static string GetMD5Hash(string sourceString)
