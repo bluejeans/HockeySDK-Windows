@@ -45,10 +45,10 @@
             MessageBox.Show("Uncaught background exception has been thrown.");
         }
 
-        private async void ThrowUncaughtBackgroundException()
+        private async Task ThrowUncaughtBackgroundException()
         {
             var task = Task<bool>.Run(() => { throw new InvalidOperationException("BackgroundException"); return false; });
-            //var x = await task;
+            var x = await task;
         }
 
         private void HandleHandledException_Click(object sender, RoutedEventArgs e)
